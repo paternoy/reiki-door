@@ -2,9 +2,10 @@
 
 from flask import Flask,request,render_template, redirect, url_for, jsonify, Response
 import logging
-import time
+import sched,time
 import RPi.GPIO as GPIO
 from SequenceMatcher import SequenceMatcher
+from threading import Timer
 
 lockPin = 18
 callPin=17
@@ -14,6 +15,8 @@ isPressed=0
 sampleSequence = [[0.0, 0.38469886779785156], [0.7873218059539795, 0.3878810405731201], [1.5543298721313477, 0.45166516304016113]]
 sampleSequence = [[0.0, 0.38469886779785156], [0.3333333333333333, 0.3878810405731201], [1.0, 0.45166516304016113]]
 sequenceMatcher=SequenceMatcher()
+scheduler = sched.scheduler(time.time, time.sleep)
+timer = 0 
 
 def init():
   logging.info('Initializing...')
@@ -24,6 +27,16 @@ def init():
   GPIO.add_event_detect(callPin, GPIO.BOTH, callback=buttonCallback)
   sequenceMatcher.setTargetSequence(sampleSequence)
 
+def timeout():
+  logging.debug('Timeout!')
+  matches = sequenceMatcher.checkMatch()
+  if matches:
+    logging.info('Sequence matches')
+    sequenceMatcher.cleanup()
+  else:
+    logging.info('Sequence does not match')
+  sequenceMatcher.cleanup()
+
 def buttonCallback(channel):
   isPressed = GPIO.input(callPin)
   logging.debug("Callback: {}".format(isPressed))
@@ -33,17 +46,17 @@ def buttonCallback(channel):
     buttonReleased()
 
 def buttonPressed():
-  global lastPulseStart,isPressed
+  global lastPulseStart,isPressed,timer
   logging.debug("Button Pressed")
   isPressed=1
   pressTime=time.time()
-  if pressTime-lastPulseStart>3:
-    sequenceMatcher.cleanup()
   if pressTime-lastPulseStart>0.1:
     lastPulseStart=pressTime
+    if timer:
+      timer.cancel()
 
 def buttonReleased():
-  global lastPulseStart,isPressed
+  global lastPulseStart,isPressed,timer
   if isPressed:
     releaseTime=time.time()
     duration=releaseTime-lastPulseStart
@@ -51,13 +64,8 @@ def buttonReleased():
       logging.debug("Button Released")
       sequenceMatcher.addPulse(lastPulseStart,duration)
       isPressed = 0
-      matches = sequenceMatcher.checkMatch()
-      if matches:
-        logging.info('Sequence matches')
-        sequenceMatcher.cleanup()
-      else:
-        logging.info('Sequence does not match')
-
+      timer = Timer(3.0, timeout)
+      timer.start()
 
 
 
@@ -78,7 +86,7 @@ def post():
 
 if __name__ == '__main__':
   try:
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.DEBUG)
     init()
